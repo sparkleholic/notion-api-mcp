@@ -244,7 +244,10 @@ async def test_tool_registration(mock_server):
 # New tests for server startup logic
 import asyncio
 from unittest import TestCase # For potential use if not using pytest fixtures for everything
-from src.notion_api_mcp.server import main as server_main
+from src.notion_api_mcp.server import main as server_main, NotionServer # Added NotionServer for spec
+from mcp.server import Server as LowLevelMCPServer # Added LowLevelMCPServer for spec
+from starlette.applications import Starlette # Added Starlette for spec
+# uvicorn is patched, so direct import for spec not strictly needed unless type hinting
 
 @pytest.mark.asyncio
 class TestServerStartup:
@@ -253,11 +256,14 @@ class TestServerStartup:
     def manage_env_vars(self):
         # Store original environment variables
         self.original_env_vars = {}
-        vars_to_manage = ["MCP_SERVER_TYPE", "MCP_HTTP_HOST", "MCP_HTTP_PORT"]
+        vars_to_manage = ["MCP_SERVER_TYPE", "MCP_HTTP_HOST", "MCP_HTTP_PORT", "MCP_DEBUG_MODE"]
         for var in vars_to_manage:
             if var in os.environ:
                 self.original_env_vars[var] = os.environ[var]
-        
+            # Ensure they are cleared if not in original_env_vars for a clean test state
+            elif var in os.environ:
+                 del os.environ[var]
+
         yield # Test runs here
 
         # Restore original environment variables
@@ -267,85 +273,124 @@ class TestServerStartup:
             elif var in os.environ: # if it was set during test but not originally
                 del os.environ[var]
 
+    @patch('uvicorn.run')
     @patch('src.notion_api_mcp.server.create_server')
-    # Removed patch for http_sse_server
-    async def test_stdio_startup_default(self, mock_create_server): # mock_http_sse_server removed
+    async def test_stdio_startup_default(self, mock_create_server, mock_uvicorn_run):
         mock_server_instance = MagicMock()
-        # Ensure app mock has both run and run_stdio_async methods
-        mock_app_instance = MagicMock(run=AsyncMock(), run_stdio_async=AsyncMock())
+        mock_app_instance = MagicMock(run_stdio_async=AsyncMock(), run=AsyncMock()) # run for old SSE, ensure not called
         mock_server_instance.app = mock_app_instance
-        # Mock the __aenter__ and __aexit__ methods for async context management
         mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
         mock_server_instance.__aexit__ = AsyncMock(return_value=None)
         mock_create_server.return_value = mock_server_instance
 
         if "MCP_SERVER_TYPE" in os.environ:
             del os.environ["MCP_SERVER_TYPE"]
+        if "MCP_DEBUG_MODE" in os.environ: # Clear debug mode for stdio tests
+            del os.environ["MCP_DEBUG_MODE"]
+
 
         await server_main()
 
         mock_create_server.assert_called_once()
         mock_app_instance.run_stdio_async.assert_called_once()
-        mock_app_instance.run.assert_not_called() # Ensure SSE run is not called
+        mock_uvicorn_run.assert_not_called()
+        mock_app_instance.run.assert_not_called() # Still good to check FastMCP's run isn't called
 
+    @patch('uvicorn.run')
     @patch('src.notion_api_mcp.server.create_server')
-    # Removed patch for http_sse_server
-    async def test_stdio_startup_explicit(self, mock_create_server): # mock_http_sse_server removed
+    async def test_stdio_startup_explicit(self, mock_create_server, mock_uvicorn_run):
         mock_server_instance = MagicMock()
-        mock_app_instance = MagicMock(run=AsyncMock(), run_stdio_async=AsyncMock())
+        mock_app_instance = MagicMock(run_stdio_async=AsyncMock(), run=AsyncMock())
         mock_server_instance.app = mock_app_instance
         mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
         mock_server_instance.__aexit__ = AsyncMock(return_value=None)
         mock_create_server.return_value = mock_server_instance
 
         os.environ["MCP_SERVER_TYPE"] = "stdio"
+        if "MCP_DEBUG_MODE" in os.environ: # Clear debug mode for stdio tests
+            del os.environ["MCP_DEBUG_MODE"]
 
         await server_main()
 
         mock_create_server.assert_called_once()
         mock_app_instance.run_stdio_async.assert_called_once()
-        mock_app_instance.run.assert_not_called() # Ensure SSE run is not called
+        mock_uvicorn_run.assert_not_called()
+        mock_app_instance.run.assert_not_called() # Still good to check FastMCP's run isn't called
 
+    @patch('uvicorn.run')
+    @patch('src.notion_api_mcp.server.create_mcp_starlette_app')
     @patch('src.notion_api_mcp.server.create_server')
-    # Removed patch for http_sse_server
-    async def test_http_sse_startup_custom_host_port(self, mock_create_server): # mock_http_sse_server removed
-        mock_server_instance = MagicMock()
-        mock_app_instance = MagicMock(run=AsyncMock(), run_stdio_async=AsyncMock())
-        mock_server_instance.app = mock_app_instance
-        mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
-        mock_server_instance.__aexit__ = AsyncMock(return_value=None)
-        mock_create_server.return_value = mock_server_instance
-
+    async def test_http_sse_startup_custom_host_port(self, mock_create_server, mock_create_mcp_starlette_app, mock_uvicorn_run):
         os.environ["MCP_SERVER_TYPE"] = "http-sse"
         os.environ["MCP_HTTP_HOST"] = "0.0.0.0"
         os.environ["MCP_HTTP_PORT"] = "9999"
+        os.environ["MCP_DEBUG_MODE"] = "true" # Test with debug true
+
+        # Mock NotionServer instance (returned by create_server)
+        mock_server_instance = MagicMock(spec=NotionServer)
+        mock_server_instance.app = MagicMock() # This is the FastMCP instance
+        mock_server_instance.app._mcp_server = MagicMock(spec=LowLevelMCPServer) # The underlying mcp.server.Server
+        mock_server_instance.app.run_stdio_async = AsyncMock() # For not_called assertion
+        mock_server_instance.close = AsyncMock() # For the finally block
+        mock_create_server.return_value = mock_server_instance
+
+        # Mock Starlette app instance (returned by create_mcp_starlette_app)
+        mock_starlette_app_instance = MagicMock(spec=Starlette)
+        mock_create_mcp_starlette_app.return_value = mock_starlette_app_instance
 
         await server_main()
 
         mock_create_server.assert_called_once()
-        mock_app_instance.run.assert_called_once_with(transport="sse")
-        mock_app_instance.run_stdio_async.assert_not_called()
+        expected_debug_mode = True # MCP_DEBUG_MODE is "true"
+        mock_create_mcp_starlette_app.assert_called_once_with(
+            mock_server_instance.app._mcp_server, 
+            debug=expected_debug_mode
+        )
+        mock_uvicorn_run.assert_called_once_with(
+            mock_starlette_app_instance, 
+            host="0.0.0.0", 
+            port=9999
+        )
+        mock_server_instance.app.run_stdio_async.assert_not_called()
+        mock_server_instance.close.assert_called_once()
 
-
+    @patch('uvicorn.run')
+    @patch('src.notion_api_mcp.server.create_mcp_starlette_app')
     @patch('src.notion_api_mcp.server.create_server')
-    # Removed patch for http_sse_server
-    async def test_http_sse_startup_default_host_port(self, mock_create_server): # mock_http_sse_server removed
-        mock_server_instance = MagicMock()
-        mock_app_instance = MagicMock(run=AsyncMock(), run_stdio_async=AsyncMock())
-        mock_server_instance.app = mock_app_instance
-        mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
-        mock_server_instance.__aexit__ = AsyncMock(return_value=None)
-        mock_create_server.return_value = mock_server_instance
-        
+    async def test_http_sse_startup_default_host_port(self, mock_create_server, mock_create_mcp_starlette_app, mock_uvicorn_run):
         os.environ["MCP_SERVER_TYPE"] = "http-sse"
-        # Ensure MCP_HTTP_HOST and MCP_HTTP_PORT are not set for this test, relying on defaults
+        # MCP_HTTP_HOST and MCP_HTTP_PORT are deliberately not set to test defaults
+        # MCP_DEBUG_MODE is not set, should default to false
         if "MCP_HTTP_HOST" in os.environ:
             del os.environ["MCP_HTTP_HOST"]
         if "MCP_HTTP_PORT" in os.environ:
             del os.environ["MCP_HTTP_PORT"]
+        if "MCP_DEBUG_MODE" in os.environ:
+            del os.environ["MCP_DEBUG_MODE"]
+
+
+        mock_server_instance = MagicMock(spec=NotionServer)
+        mock_server_instance.app = MagicMock()
+        mock_server_instance.app._mcp_server = MagicMock(spec=LowLevelMCPServer)
+        mock_server_instance.app.run_stdio_async = AsyncMock()
+        mock_server_instance.close = AsyncMock()
+        mock_create_server.return_value = mock_server_instance
+
+        mock_starlette_app_instance = MagicMock(spec=Starlette)
+        mock_create_mcp_starlette_app.return_value = mock_starlette_app_instance
 
         await server_main()
 
         mock_create_server.assert_called_once()
-        mock_app_instance.run.assert_called_once_with(transport="sse")
-        mock_app_instance.run_stdio_async.assert_not_called()
+        expected_debug_mode = False # MCP_DEBUG_MODE is not set
+        mock_create_mcp_starlette_app.assert_called_once_with(
+            mock_server_instance.app._mcp_server, 
+            debug=expected_debug_mode
+        )
+        mock_uvicorn_run.assert_called_once_with(
+            mock_starlette_app_instance, 
+            host="localhost", # Default host
+            port=8080       # Default port
+        )
+        mock_server_instance.app.run_stdio_async.assert_not_called()
+        mock_server_instance.close.assert_called_once()

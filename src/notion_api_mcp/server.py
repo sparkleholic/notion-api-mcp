@@ -27,11 +27,16 @@ import os
 import asyncio
 from functools import wraps
 
-from mcp.server.lowlevel import Server as MCPServer
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.routing import Mount, Route
+import uvicorn
+from mcp.server.sse import SseServerTransport
+from mcp.server import Server as LowLevelMCPServer # To avoid confusion with NotionServer
+# from mcp.server.lowlevel import Server as MCPServer # This is the same as LowLevelMCPServer
 from mcp.server.fastmcp import FastMCP
 from mcp.server.stdio import stdio_server
-# Removed: from mcp.server.http_sse import http_sse_server
-from mcp.types import ErrorData, TextContent, EmbeddedResource
+from mcp.types import ErrorData, TextContent, EmbeddedResource, InitializationOptions # Added InitializationOptions
 from mcp.shared.exceptions import McpError
 
 from .api.pages import PagesAPI
@@ -803,33 +808,107 @@ class NotionServer:
 def create_server():
     """Create and configure the server instance"""
     try:
-        server = NotionServer(ServerConfig.from_env())
+        server_config = ServerConfig.from_env()
+        # Note: NotionServer itself uses FastMCP which has a LowLevelMCPServer internally.
+        # The create_server() function will return an instance of NotionServer.
+        server = NotionServer(server_config)
         return server
     except Exception as e:
         logger.warning(f"Failed to initialize server with environment config: {e}")
         return None
 
+def create_mcp_starlette_app(mcp_low_level_server: LowLevelMCPServer, debug: bool = False) -> Starlette:
+    sse_transport = SseServerTransport("/mcp_messages/") # Or another suitable path
+
+    async def handle_sse_connection(request: Request) -> None:
+        # Note: request._send is a Starlette internal, but used in example.
+        # Consider if there's a more public API if issues arise.
+        async with sse_transport.connect_sse(
+            request.scope,
+            request.receive,
+            request._send, 
+        ) as (read_stream, write_stream):
+            # Regarding create_initialization_options():
+            # LowLevelMCPServer (mcp.server.Server) has get_initialization_options()
+            # or can be run with InitializationOptions(capabilities=mcp_low_level_server.get_capabilities())
+            # Assuming the example's `create_initialization_options()` is a placeholder for such logic.
+            # FastMCP's _mcp_server is an instance of mcp.server.Server.
+            # It has `get_initialization_options()` method.
+            init_options = mcp_low_level_server.get_initialization_options()
+            await mcp_low_level_server.run(
+                read_stream,
+                write_stream,
+                init_options,
+            )
+
+    return Starlette(
+        debug=debug,
+        routes=[
+            Route("/mcp_sse", endpoint=handle_sse_connection), # Or another suitable path
+            Mount("/mcp_messages/", app=sse_transport.handle_post_message), # Must match SseServerTransport path
+        ],
+    )
+
 async def main():
     """Main entry point for the enhanced server"""
-    server = create_server()
-    if server is None:
-        logger.error("Failed to initialize server")
-        return
+    server_type = os.getenv("MCP_SERVER_TYPE", "stdio").lower()
+    # Ensure logger is available; it's globally configured so this should be fine.
+    # logger = logging.getLogger("notion_mcp") # Already configured globally
+
+    if server_type == "http-sse":
+        # Initialize server to get FastMCP instance, but don't use its context manager here
+        temp_server_for_mcp_access = create_server()
+        if temp_server_for_mcp_access is None:
+            logger.error("Failed to initialize server configuration for SSE mode.")
+            return
         
-    async with server:
+        # The tools in NotionServer call self.ensure_client() if needed,
+        # so client setup should be handled per-call.
+
+        # Access the underlying LowLevelMCPServer from FastMCP instance
+        # FastMCP's self.app is the FastMCP instance.
+        # FastMCP has _mcp_server which is the LowLevelMCPServer.
+        mcp_low_level_server = temp_server_for_mcp_access.app._mcp_server 
+        
+        host = os.getenv("MCP_HTTP_HOST", "localhost")
+        port = int(os.getenv("MCP_HTTP_PORT", "8080"))
+        
+        # Use a debug flag, e.g., from an environment variable
+        debug_mode = os.getenv("MCP_DEBUG_MODE", "false").lower() == "true"
+        logger.info(f"Configuring Starlette app for SSE. Intended host: {host}, port: {port}. Debug: {debug_mode}")
+        starlette_app = create_mcp_starlette_app(mcp_low_level_server, debug=debug_mode)
+        
+        logger.info(f"Starting MCP server with Uvicorn for SSE on http://{host}:{port}")
+        # Uvicorn will take over the event loop here.
+        # Note: temp_server_for_mcp_access.close() will not be called automatically.
+        # This could be an issue for resource cleanup (e.g. httpx.AsyncClient).
+        # For now, proceeding as per instructions which prioritize Uvicorn integration.
         try:
-            server_type = os.getenv("MCP_SERVER_TYPE", "stdio").lower()
-            if server_type == "http-sse":
-                host = os.getenv("MCP_HTTP_HOST", "localhost")
-                port = int(os.getenv("MCP_HTTP_PORT", "8080"))
-                logger.info(f"Attempting to start server in HTTP-SSE mode. Configured host: {host}, port: {port}. Actual binding may vary based on FastMCP defaults or other configurations.")
-                await server.app.run(transport="sse")
+            uvicorn.run(starlette_app, host=host, port=port)
+        finally:
+            # Attempt to clean up resources if Uvicorn exits
+            if hasattr(temp_server_for_mcp_access, 'close') and asyncio.iscoroutinefunction(temp_server_for_mcp_access.close):
+                logger.info("Attempting to close NotionServer resources after Uvicorn exit...")
+                await temp_server_for_mcp_access.close()
             else:
+                logger.info("No async close method found on NotionServer instance or not a coroutine.")
+
+
+    elif server_type == "stdio":
+        # For stdio, use the existing logic with the async context manager for NotionServer
+        server = create_server()
+        if server is None:
+            logger.error("Failed to initialize server for stdio mode.")
+            return
+        async with server: # Manages NotionServer's resources like the HTTPX client
+            try:
                 logger.info("Starting server in MCP-STDIO mode")
                 await server.app.run_stdio_async()
-        except Exception as e:
-            logger.error(f"Server error: {str(e)}")
-            raise
+            except Exception as e:
+                logger.error(f"MCP-STDIO server error: {str(e)}", exc_info=True)
+                # No need to raise here, let it exit gracefully if possible or main loop handles
+    else:
+        logger.error(f"Unsupported MCP_SERVER_TYPE: {server_type}")
 
 if __name__ == "__main__":
     import asyncio

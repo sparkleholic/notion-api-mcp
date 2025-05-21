@@ -27,22 +27,25 @@ Optional (at least one is required):
 #### `MCP_SERVER_TYPE`
 Specifies the communication protocol and operational mode for the MCP server.
 -   **`stdio`** (Default): The server communicates over standard input/output channels. This is typically used when the server is managed as a child process by another application (e.g., Claude Desktop).
--   **`http-sse`**: The server operates as an HTTP server using Server-Sent Events (SSE) for communication. This mode allows the server to be accessed over a network.
+-   **`http-sse`**: The server operates as an HTTP server using Server-Sent Events (SSE). In this mode, the server is run using the Uvicorn ASGI server to host a Starlette application, which handles the SSE communication. This mode allows the server to be accessed over a network.
 
 #### HTTP-SSE Specific Variables
-These variables are applicable only if `MCP_SERVER_TYPE` is set to `http-sse`.
+These variables are used only when `MCP_SERVER_TYPE` is set to `http-sse`.
 
 ##### `MCP_HTTP_HOST`
--   **Description**: Specifies the desired hostname or IP address for the HTTP-SSE server. The application reads this variable, and it's logged at startup. However, `FastMCP` might use its own defaults or other configuration mechanisms for actual binding when `transport='sse'` is used. Users should check server logs for the actual listening address and test if setting this variable influences the binding.
+-   **Description**: Defines the hostname or IP address on which the Uvicorn server will listen when running in `http-sse` mode. This is passed directly to Uvicorn.
 -   **Default**: `localhost`
 -   **Usage**: Set this to `0.0.0.0` to make the server accessible from other machines on the network, or a specific IP address to bind to that interface.
 
 ##### `MCP_HTTP_PORT`
--   **Description**: Specifies the desired port number for the HTTP-SSE server. The application reads this variable, and it's logged at startup. Similar to `MCP_HTTP_HOST`, `FastMCP` might use its own defaults or other configuration mechanisms. Users should check server logs for the actual listening port and test if setting this variable influences the binding.
+-   **Description**: Defines the port number on which the Uvicorn server will listen when running in `http-sse` mode. This is passed directly to Uvicorn.
 -   **Default**: `8080`
 -   **Usage**: Ensure this port is not in use by another application.
 
-**Note**: The `FastMCP` library is responsible for handling the HTTP-SSE transport. While `MCP_HTTP_HOST` and `MCP_HTTP_PORT` are read by this application, their effect on `FastMCP`'s default SSE behavior is pending further confirmation. The server logs will indicate the host/port values intended by these variables.
+##### `MCP_DEBUG_MODE`
+-   **Description**: If set to `true` (case-insensitive), enables debug mode for the Starlette application when running in `http-sse` mode. This typically provides more verbose logging from Starlette and may enable features like auto-reloading if Uvicorn is also configured for it (though Uvicorn's reload is not explicitly enabled by this flag alone in the current server setup).
+-   **Possible Values**: `true`, `false`
+-   **Default**: `false`
 
 ## Configuration Sources
 
