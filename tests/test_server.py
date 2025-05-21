@@ -323,7 +323,7 @@ class TestServerStartup:
         await server_main()
 
         mock_create_server.assert_called_once()
-        mock_app_instance.run.assert_called_once_with(transport="sse", host="0.0.0.0", port=9999)
+        mock_app_instance.run.assert_called_once_with(transport="sse")
         mock_app_instance.run_stdio_async.assert_not_called()
 
 
@@ -347,5 +347,5 @@ class TestServerStartup:
         await server_main()
 
         mock_create_server.assert_called_once()
-        mock_app_instance.run.assert_called_once_with(transport="sse", host="localhost", port=8080)
+        mock_app_instance.run.assert_called_once_with(transport="sse")
         mock_app_instance.run_stdio_async.assert_not_called()

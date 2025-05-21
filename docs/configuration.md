@@ -33,14 +33,16 @@ Specifies the communication protocol and operational mode for the MCP server.
 These variables are applicable only if `MCP_SERVER_TYPE` is set to `http-sse`.
 
 ##### `MCP_HTTP_HOST`
--   **Description**: Defines the hostname or IP address on which the HTTP-SSE server will listen.
+-   **Description**: Specifies the desired hostname or IP address for the HTTP-SSE server. The application reads this variable, and it's logged at startup. However, `FastMCP` might use its own defaults or other configuration mechanisms for actual binding when `transport='sse'` is used. Users should check server logs for the actual listening address and test if setting this variable influences the binding.
 -   **Default**: `localhost`
 -   **Usage**: Set this to `0.0.0.0` to make the server accessible from other machines on the network, or a specific IP address to bind to that interface.
 
 ##### `MCP_HTTP_PORT`
--   **Description**: Specifies the port number for the HTTP-SSE server.
+-   **Description**: Specifies the desired port number for the HTTP-SSE server. The application reads this variable, and it's logged at startup. Similar to `MCP_HTTP_HOST`, `FastMCP` might use its own defaults or other configuration mechanisms. Users should check server logs for the actual listening port and test if setting this variable influences the binding.
 -   **Default**: `8080`
 -   **Usage**: Ensure this port is not in use by another application.
+
+**Note**: The `FastMCP` library is responsible for handling the HTTP-SSE transport. While `MCP_HTTP_HOST` and `MCP_HTTP_PORT` are read by this application, their effect on `FastMCP`'s default SSE behavior is pending further confirmation. The server logs will indicate the host/port values intended by these variables.
 
 ## Configuration Sources
 

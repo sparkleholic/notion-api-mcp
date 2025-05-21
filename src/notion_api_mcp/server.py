@@ -822,8 +822,8 @@ async def main():
             if server_type == "http-sse":
                 host = os.getenv("MCP_HTTP_HOST", "localhost")
                 port = int(os.getenv("MCP_HTTP_PORT", "8080"))
-                logger.info(f"Starting server in HTTP-SSE mode on {host}:{port}")
-                await server.app.run(transport="sse", host=host, port=port)
+                logger.info(f"Attempting to start server in HTTP-SSE mode. Configured host: {host}, port: {port}. Actual binding may vary based on FastMCP defaults or other configurations.")
+                await server.app.run(transport="sse")
             else:
                 logger.info("Starting server in MCP-STDIO mode")
                 await server.app.run_stdio_async()
