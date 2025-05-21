@@ -30,6 +30,7 @@ from functools import wraps
 from mcp.server.lowlevel import Server as MCPServer
 from mcp.server.fastmcp import FastMCP
 from mcp.server.stdio import stdio_server
+from mcp.server.http_sse import http_sse_server # Assuming this is the correct import
 from mcp.types import ErrorData, TextContent, EmbeddedResource
 from mcp.shared.exceptions import McpError
 
@@ -817,11 +818,23 @@ async def main():
         
     async with server:
         try:
-            await server.app.run_stdio_async()
+            server_type = os.getenv("MCP_SERVER_TYPE", "stdio").lower()
+            if server_type == "http-sse":
+                host = os.getenv("MCP_HTTP_HOST", "localhost")
+                port = int(os.getenv("MCP_HTTP_PORT", "8080"))
+                logger.info(f"Starting server in HTTP-SSE mode on {host}:{port}")
+                # Assuming run_http_sse_async is a method of server.app or http_sse_server is a function
+                # Based on mcp.server.stdio.stdio_server, it's likely a function call:
+                await http_sse_server(server.app, host=host, port=port)
+            else:
+                logger.info("Starting server in MCP-STDIO mode")
+                await server.app.run_stdio_async()
         except Exception as e:
             logger.error(f"Server error: {str(e)}")
             raise
 
 if __name__ == "__main__":
     import asyncio
+    # os import is already present due to its usage in ServerConfig.from_env
+    # No need to add it again here, but ensure it's at the top of the file if it wasn't.
     asyncio.run(main())

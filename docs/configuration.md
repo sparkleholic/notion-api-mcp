@@ -20,6 +20,28 @@ Optional (at least one is required):
   - Required if you want to work with an existing database
   - Get from the database's URL
 
+---
+
+### Server Operation Mode
+
+#### `MCP_SERVER_TYPE`
+Specifies the communication protocol and operational mode for the MCP server.
+-   **`stdio`** (Default): The server communicates over standard input/output channels. This is typically used when the server is managed as a child process by another application (e.g., Claude Desktop).
+-   **`http-sse`**: The server operates as an HTTP server using Server-Sent Events (SSE) for communication. This mode allows the server to be accessed over a network.
+
+#### HTTP-SSE Specific Variables
+These variables are applicable only if `MCP_SERVER_TYPE` is set to `http-sse`.
+
+##### `MCP_HTTP_HOST`
+-   **Description**: Defines the hostname or IP address on which the HTTP-SSE server will listen.
+-   **Default**: `localhost`
+-   **Usage**: Set this to `0.0.0.0` to make the server accessible from other machines on the network, or a specific IP address to bind to that interface.
+
+##### `MCP_HTTP_PORT`
+-   **Description**: Specifies the port number for the HTTP-SSE server.
+-   **Default**: `8080`
+-   **Usage**: Ensure this port is not in use by another application.
+
 ## Configuration Sources
 
 You can provide these variables in two ways:

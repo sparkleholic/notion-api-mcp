@@ -240,3 +240,114 @@ async def test_tool_registration(mock_server):
     
     assert "add_todo" in tool_names
     assert "search_todos" in tool_names
+
+# New tests for server startup logic
+import asyncio
+from unittest import TestCase # For potential use if not using pytest fixtures for everything
+from src.notion_api_mcp.server import main as server_main
+
+@pytest.mark.asyncio
+class TestServerStartup:
+
+    @pytest.fixture(autouse=True)
+    def manage_env_vars(self):
+        # Store original environment variables
+        self.original_env_vars = {}
+        vars_to_manage = ["MCP_SERVER_TYPE", "MCP_HTTP_HOST", "MCP_HTTP_PORT"]
+        for var in vars_to_manage:
+            if var in os.environ:
+                self.original_env_vars[var] = os.environ[var]
+        
+        yield # Test runs here
+
+        # Restore original environment variables
+        for var in vars_to_manage:
+            if var in self.original_env_vars:
+                os.environ[var] = self.original_env_vars[var]
+            elif var in os.environ: # if it was set during test but not originally
+                del os.environ[var]
+
+    @patch('src.notion_api_mcp.server.create_server')
+    @patch('src.notion_api_mcp.server.http_sse_server', new_callable=AsyncMock)
+    async def test_stdio_startup_default(self, mock_http_sse_server, mock_create_server):
+        mock_server_instance = MagicMock()
+        mock_app_instance = MagicMock(run_stdio_async=AsyncMock())
+        mock_server_instance.app = mock_app_instance
+        # Mock the __aenter__ and __aexit__ methods for async context management
+        mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
+        mock_server_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_create_server.return_value = mock_server_instance
+
+        if "MCP_SERVER_TYPE" in os.environ:
+            del os.environ["MCP_SERVER_TYPE"]
+
+        await server_main()
+
+        mock_create_server.assert_called_once()
+        mock_app_instance.run_stdio_async.assert_called_once()
+        mock_http_sse_server.assert_not_called()
+
+    @patch('src.notion_api_mcp.server.create_server')
+    @patch('src.notion_api_mcp.server.http_sse_server', new_callable=AsyncMock)
+    async def test_stdio_startup_explicit(self, mock_http_sse_server, mock_create_server):
+        mock_server_instance = MagicMock()
+        mock_app_instance = MagicMock(run_stdio_async=AsyncMock())
+        mock_server_instance.app = mock_app_instance
+        mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
+        mock_server_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_create_server.return_value = mock_server_instance
+
+        os.environ["MCP_SERVER_TYPE"] = "stdio"
+
+        await server_main()
+
+        mock_create_server.assert_called_once()
+        mock_app_instance.run_stdio_async.assert_called_once()
+        mock_http_sse_server.assert_not_called()
+
+    @patch('src.notion_api_mcp.server.create_server')
+    @patch('src.notion_api_mcp.server.http_sse_server', new_callable=AsyncMock)
+    async def test_http_sse_startup_custom_host_port(self, mock_http_sse_server, mock_create_server):
+        mock_server_instance = MagicMock()
+        mock_app_instance = MagicMock() # http_sse_server will be called with this app
+        mock_server_instance.app = mock_app_instance
+        mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
+        mock_server_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_create_server.return_value = mock_server_instance
+
+        os.environ["MCP_SERVER_TYPE"] = "http-sse"
+        os.environ["MCP_HTTP_HOST"] = "0.0.0.0"
+        os.environ["MCP_HTTP_PORT"] = "9999"
+
+        await server_main()
+
+        mock_create_server.assert_called_once()
+        mock_http_sse_server.assert_called_once_with(mock_app_instance, host="0.0.0.0", port=9999)
+        # Ensure stdio was not called if app had the method (it doesn't in this specific mock setup for this test)
+        if hasattr(mock_app_instance, 'run_stdio_async') and isinstance(mock_app_instance.run_stdio_async, AsyncMock):
+             mock_app_instance.run_stdio_async.assert_not_called()
+
+
+    @patch('src.notion_api_mcp.server.create_server')
+    @patch('src.notion_api_mcp.server.http_sse_server', new_callable=AsyncMock)
+    async def test_http_sse_startup_default_host_port(self, mock_http_sse_server, mock_create_server):
+        mock_server_instance = MagicMock()
+        mock_app_instance = MagicMock() # http_sse_server will be called with this app
+        mock_server_instance.app = mock_app_instance
+        mock_server_instance.__aenter__ = AsyncMock(return_value=mock_server_instance)
+        mock_server_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_create_server.return_value = mock_server_instance
+        
+        os.environ["MCP_SERVER_TYPE"] = "http-sse"
+        # Ensure MCP_HTTP_HOST and MCP_HTTP_PORT are not set for this test, relying on defaults
+        if "MCP_HTTP_HOST" in os.environ:
+            del os.environ["MCP_HTTP_HOST"]
+        if "MCP_HTTP_PORT" in os.environ:
+            del os.environ["MCP_HTTP_PORT"]
+
+        await server_main()
+
+        mock_create_server.assert_called_once()
+        mock_http_sse_server.assert_called_once_with(mock_app_instance, host="localhost", port=8080)
+        if hasattr(mock_app_instance, 'run_stdio_async') and isinstance(mock_app_instance.run_stdio_async, AsyncMock):
+             mock_app_instance.run_stdio_async.assert_not_called()
