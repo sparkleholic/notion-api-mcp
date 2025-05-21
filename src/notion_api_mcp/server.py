@@ -36,7 +36,7 @@ from mcp.server import Server as LowLevelMCPServer # To avoid confusion with Not
 # from mcp.server.lowlevel import Server as MCPServer # This is the same as LowLevelMCPServer
 from mcp.server.fastmcp import FastMCP
 from mcp.server.stdio import stdio_server
-from mcp.types import ErrorData, TextContent, EmbeddedResource, InitializationOptions # Added InitializationOptions
+from mcp.types import ErrorData, TextContent, EmbeddedResource # Removed InitializationOptions
 from mcp.shared.exceptions import McpError
 
 from .api.pages import PagesAPI
